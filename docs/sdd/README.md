@@ -14,6 +14,8 @@ Tempo é um app SwiftUI para macOS 14+ que captura todas as telas com ScreenCapt
 | Vídeo invertido/orientação | [002-video-orientation.md](features/002-video-orientation.md) | `VideoExporter.swift` |
 | Permissão repetida de gravação | [003-screen-permission.md](features/003-screen-permission.md) | `AppModel.swift`, `package-app.sh` |
 | Pausa, repouso e retomada | [004-pause-and-sleep.md](features/004-pause-and-sleep.md) | `AppModel.swift`, `NotificationCoordinator.swift`, `ContentView.swift` |
+| Retomada volta a pausar | [007-stable-wake-resume.md](features/007-stable-wake-resume.md) | `AppModel.swift`, `CaptureSession.swift`, `AppModelSleepTests.swift` |
+| Zero quadros e falha transitória | [008-first-frame-recovery.md](features/008-first-frame-recovery.md) | `AppModel.swift`, `TemporarySessionCleaner.swift`, `AppModelCaptureRecoveryTests.swift` |
 | Metodologia, harness e fixtures | [005-sdd-test-infrastructure.md](features/005-sdd-test-infrastructure.md) | `Tests/TempoTests/Harness`, `Tests/TempoTests/Fixtures` |
 | Publicação e convenções Git | [006-github-publication.md](features/006-github-publication.md) | `.gitignore`, `.gitattributes`, `Scripts/package-source.sh` |
 

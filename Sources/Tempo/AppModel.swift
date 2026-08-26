@@ -1,10 +1,28 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import OSLog
 import ScreenCaptureKit
+
+private actor CaptureFailureTracker {
+    private var consecutiveFailures = 0
+    private var capturedSinceLastFailure = false
+
+    func markCapture() {
+        capturedSinceLastFailure = true
+    }
+
+    func registerFailure() -> Int {
+        consecutiveFailures = capturedSinceLastFailure ? 1 : consecutiveFailures + 1
+        capturedSinceLastFailure = false
+        return consecutiveFailures
+    }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let logger = Logger(subsystem: "com.local.tempo", category: "capture")
+
     @Published var phase: AppPhase = .idle
     @Published var displays: [DisplayInfo] = []
     @Published var quality: OutputQuality = .sharp
@@ -13,15 +31,32 @@ final class AppModel: ObservableObject {
     @Published var exportProgress = 0.0
     @Published var accumulatedRecordingDuration: TimeInterval = 0
     @Published var showResumePrompt = false
+    @Published var lastCaptureErrorMessage: String?
 
-    private var session: CaptureSession?
+    private enum SystemInterruption: Hashable {
+        case screens
+        case system
+        case session
+    }
+
+    private var session: (any CaptureSessionProtocol)?
     private var recordingTask: Task<Void, Never>?
     private var pauseSettlingTask: Task<Void, Never>?
     private var segmentStartedAt: Date?
     private var wakePromptSent = false
+    private var activeSystemInterruptions: Set<SystemInterruption> = []
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    private let maximumConsecutiveCaptureFailures: Int
+    private let captureRetryBaseDelayNanoseconds: UInt64
 
-    init() {
+    init(
+        session: (any CaptureSessionProtocol)? = nil,
+        maximumConsecutiveCaptureFailures: Int = 5,
+        captureRetryBaseDelayNanoseconds: UInt64 = 500_000_000
+    ) {
+        self.session = session
+        self.maximumConsecutiveCaptureFailures = maximumConsecutiveCaptureFailures
+        self.captureRetryBaseDelayNanoseconds = captureRetryBaseDelayNanoseconds
         removeStaleTemporarySessions()
         refreshDisplays()
         NotificationCoordinator.shared.configure()
@@ -33,10 +68,12 @@ final class AppModel: ObservableObject {
         if case .paused = phase { return true }
         return false
     }
+    var canResume: Bool { isPaused && activeSystemInterruptions.isEmpty }
+    var canExport: Bool { frameCount > 0 && (isRecording || isPaused) }
     var canStart: Bool { phase == .idle || isFinishedOrFailed }
     var resumePromptMessage: String {
         if case .paused(.captureInterrupted) = phase {
-            return "A captura foi interrompida, mas seus quadros estão seguros. Você pode tentar continuar ou manter a gravação pausada."
+            return pausedDetail(for: .captureInterrupted)
         }
         return "As telas voltaram e seus quadros estão seguros. A gravação permanece pausada até você decidir."
     }
@@ -44,6 +81,17 @@ final class AppModel: ObservableObject {
         if case .finished = phase { return true }
         if case .failed = phase { return true }
         return false
+    }
+
+    func pausedDetail(for reason: PauseReason) -> String {
+        guard reason == .captureInterrupted else { return reason.detail }
+        let frameStatus = frameCount == 0
+            ? "Nenhum quadro foi salvo ainda."
+            : "Os \(frameCount) quadros já salvos continuam seguros."
+        if let lastCaptureErrorMessage {
+            return "\(frameStatus) O Tempo tentou novamente antes de pausar. Detalhe: \(lastCaptureErrorMessage)"
+        }
+        return "\(frameStatus) Você pode tentar continuar."
     }
 
     func refreshDisplays() {
@@ -80,9 +128,11 @@ final class AppModel: ObservableObject {
             captureInterval = 2
             exportProgress = 0
             accumulatedRecordingDuration = 0
-            segmentStartedAt = Date()
+            segmentStartedAt = nil
             wakePromptSent = false
+            activeSystemInterruptions.removeAll()
             showResumePrompt = false
+            lastCaptureErrorMessage = nil
             phase = .recording
             NotificationCoordinator.shared.requestAuthorizationIfNeeded()
             startCaptureLoop(session: newSession)
@@ -91,22 +141,53 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startCaptureLoop(session activeSession: CaptureSession) {
+    private func startCaptureLoop(session activeSession: any CaptureSessionProtocol) {
+        let maximumFailures = maximumConsecutiveCaptureFailures
+        let baseDelay = captureRetryBaseDelayNanoseconds
+        let failureTracker = CaptureFailureTracker()
         recordingTask = Task { [weak self] in
-            do {
-                try await activeSession.run { count, interval in
-                    await MainActor.run {
-                        self?.frameCount = count
-                        self?.captureInterval = interval
+            while !Task.isCancelled {
+                do {
+                    try await activeSession.run { count, interval in
+                        await failureTracker.markCapture()
+                        await MainActor.run {
+                            guard let self, self.phase == .recording else { return }
+                            if self.segmentStartedAt == nil {
+                                self.segmentStartedAt = Date()
+                            }
+                            self.frameCount = count
+                            self.captureInterval = interval
+                            self.lastCaptureErrorMessage = nil
+                        }
                     }
-                }
-            } catch is CancellationError {
-                // Expected when the user pauses or stops.
-            } catch {
-                await Task.yield()
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.pauseAfterCaptureInterruption()
+                    return
+                } catch is CancellationError {
+                    return
+                } catch {
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+
+                    let failureCount = await failureTracker.registerFailure()
+                    let message = Self.captureErrorMessage(for: error)
+                    Self.logger.error("Capture attempt \(failureCount) failed: \(message, privacy: .public)")
+                    await MainActor.run {
+                        self?.lastCaptureErrorMessage = message
+                    }
+
+                    guard failureCount < maximumFailures else {
+                        await MainActor.run {
+                            self?.pauseAfterCaptureInterruption(error: error)
+                        }
+                        return
+                    }
+
+                    let exponent = min(failureCount - 1, 3)
+                    let delay = baseDelay * UInt64(1 << exponent)
+                    do {
+                        try await Task.sleep(nanoseconds: delay)
+                    } catch {
+                        return
+                    }
                 }
             }
         }
@@ -117,12 +198,13 @@ final class AppModel: ObservableObject {
     }
 
     func resumeRecording() {
-        guard case .paused = phase, let session else { return }
+        guard canResume, let session else { return }
         showResumePrompt = false
         wakePromptSent = false
+        activeSystemInterruptions.removeAll()
         NotificationCoordinator.shared.clearWakeNotification()
         refreshDisplays()
-        segmentStartedAt = Date()
+        segmentStartedAt = nil
         phase = .recording
 
         let settlingTask = pauseSettlingTask
@@ -144,7 +226,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAndExport() {
-        guard (isRecording || isPaused), let session else { return }
+        guard canExport, let session else { return }
         finishActiveSegment()
         showResumePrompt = false
         wakePromptSent = false
@@ -205,6 +287,34 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func cancelRecording() {
+        guard (isRecording || isPaused), let session else { return }
+        finishActiveSegment()
+        showResumePrompt = false
+        wakePromptSent = false
+        activeSystemInterruptions.removeAll()
+        NotificationCoordinator.shared.clearWakeNotification()
+
+        let task = recordingTask
+        task?.cancel()
+        recordingTask = nil
+        let settlingTask = pauseSettlingTask
+        pauseSettlingTask = nil
+        self.session = nil
+        phase = .idle
+        frameCount = 0
+        exportProgress = 0
+        lastCaptureErrorMessage = nil
+        resetRecordingClock()
+        refreshDisplays()
+
+        Task {
+            await task?.value
+            await settlingTask?.value
+            await session.discard()
+        }
+    }
+
     func revealFinishedVideo() {
         guard case .finished(let url) = phase else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -221,6 +331,8 @@ final class AppModel: ObservableObject {
         exportProgress = 0
         showResumePrompt = false
         wakePromptSent = false
+        activeSystemInterruptions.removeAll()
+        lastCaptureErrorMessage = nil
         resetRecordingClock()
         refreshDisplays()
     }
@@ -257,21 +369,33 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func pauseAutomatically(reason: PauseReason) {
-        guard phase == .recording else { return }
-        pauseRecording(reason: reason)
+    private func pauseAutomatically(
+        reason: PauseReason,
+        interruption: SystemInterruption
+    ) {
+        activeSystemInterruptions.insert(interruption)
+        if phase == .recording {
+            pauseRecording(reason: reason)
+        }
     }
 
-    private func pauseAfterCaptureInterruption() {
+    private func pauseAfterCaptureInterruption(error: Error) {
         guard phase == .recording else { return }
         finishActiveSegment()
         recordingTask = nil
+        lastCaptureErrorMessage = Self.captureErrorMessage(for: error)
         phase = .paused(.captureInterrupted)
         wakePromptSent = true
         showResumePrompt = true
     }
 
-    private func handleSystemWake() {
+    private func handleSystemRecovery(_ interruption: SystemInterruption) {
+        guard activeSystemInterruptions.remove(interruption) != nil,
+              activeSystemInterruptions.isEmpty else { return }
+        offerResumeAfterRecovery()
+    }
+
+    private func offerResumeAfterRecovery() {
         guard case .paused(let reason) = phase,
               reason.isAutomatic,
               !wakePromptSent else { return }
@@ -295,22 +419,22 @@ final class AppModel: ObservableObject {
     private func observeSystemEvents() {
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         observe(workspaceCenter, name: NSWorkspace.screensDidSleepNotification) { [weak self] in
-            self?.pauseAutomatically(reason: .screensAsleep)
+            self?.pauseAutomatically(reason: .screensAsleep, interruption: .screens)
         }
         observe(workspaceCenter, name: NSWorkspace.willSleepNotification) { [weak self] in
-            self?.pauseAutomatically(reason: .systemSleep)
+            self?.pauseAutomatically(reason: .systemSleep, interruption: .system)
         }
         observe(workspaceCenter, name: NSWorkspace.sessionDidResignActiveNotification) { [weak self] in
-            self?.pauseAutomatically(reason: .sessionInactive)
+            self?.pauseAutomatically(reason: .sessionInactive, interruption: .session)
         }
         observe(workspaceCenter, name: NSWorkspace.screensDidWakeNotification) { [weak self] in
-            self?.handleSystemWake()
+            self?.handleSystemRecovery(.screens)
         }
         observe(workspaceCenter, name: NSWorkspace.didWakeNotification) { [weak self] in
-            self?.handleSystemWake()
+            self?.handleSystemRecovery(.system)
         }
         observe(workspaceCenter, name: NSWorkspace.sessionDidBecomeActiveNotification) { [weak self] in
-            self?.handleSystemWake()
+            self?.handleSystemRecovery(.session)
         }
 
         let appCenter = NotificationCenter.default
@@ -334,14 +458,9 @@ final class AppModel: ObservableObject {
     }
 
     private func removeStaleTemporarySessions() {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-        guard let items = try? FileManager.default.contentsOfDirectory(
-            at: temporaryDirectory,
-            includingPropertiesForKeys: nil
-        ) else { return }
-        for item in items where item.lastPathComponent.hasPrefix("Tempo-") {
-            try? FileManager.default.removeItem(at: item)
-        }
+        TemporarySessionCleaner.removeStaleSessions(
+            in: FileManager.default.temporaryDirectory
+        )
     }
 
     deinit {

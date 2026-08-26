@@ -105,7 +105,7 @@ enum TempoError: LocalizedError {
         case .imageWriteFailed:
             return "Não foi possível salvar um quadro temporário."
         case .noFrames:
-            return "A gravação terminou antes do primeiro quadro."
+            return "Nenhum quadro chegou a ser salvo. Tente continuar a captura depois de confirmar que as telas estão ativas."
         case .videoSetupFailed(let message):
             return "Não foi possível criar o vídeo: \(message)"
         }

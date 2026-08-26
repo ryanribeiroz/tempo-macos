@@ -11,6 +11,7 @@ Este projeto usa Spec-Driven Development (SDD). Toda feature, correção de bug 
 
 ## Fluxo obrigatório
 
+0. **Grill:** em todo novo bug ou pedido de feature, use a skill global `grill-me` e conclua sua entrevista antes de Requirements.
 1. **Requirements:** registre história e critérios EARS (`WHEN/IF ... THEN ... SHALL`).
 2. **Design:** registre componentes, interfaces, decisões, erros e estratégia de teste.
 3. **Tasks:** liste tarefas rastreáveis aos requisitos antes de implementar.

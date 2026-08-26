@@ -4,11 +4,18 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
-actor CaptureSession {
-    struct Snapshot {
-        let frameURLs: [URL]
-        let directory: URL
-    }
+struct CaptureSnapshot: Sendable {
+    let frameURLs: [URL]
+    let directory: URL
+}
+
+protocol CaptureSessionProtocol: Sendable {
+    func run(onUpdate: @escaping @Sendable (Int, TimeInterval) async -> Void) async throws
+    func stop() async -> CaptureSnapshot
+    func discard() async
+}
+
+actor CaptureSession: CaptureSessionProtocol {
 
     private let directory: URL
     private let quality: OutputQuality
@@ -55,9 +62,9 @@ actor CaptureSession {
         }
     }
 
-    func stop() -> Snapshot {
+    func stop() -> CaptureSnapshot {
         running = false
-        return Snapshot(frameURLs: frameURLs, directory: directory)
+        return CaptureSnapshot(frameURLs: frameURLs, directory: directory)
     }
 
     func discard() {

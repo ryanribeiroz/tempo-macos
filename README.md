@@ -2,8 +2,6 @@
 
 Tempo é um gravador de timelapse nativo para macOS. Ele captura todas as telas ativas, preserva o arranjo configurado em Ajustes do Sistema e exporta um único vídeo MP4 de no máximo 36 segundos.
 
-Repositório: [github.com/ryanribeiroz/tempo-macos](https://github.com/ryanribeiroz/tempo-macos)
-
 ## Requisitos
 
 - Mac com Apple Silicon

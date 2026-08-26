@@ -81,13 +81,20 @@ struct ContentView: View {
         case .requestingPermission:
             infoRow(title: "Verificando permissão…", detail: "O macOS pode pedir acesso à gravação da tela.")
         case .recording:
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                HStack {
-                    metric(formatDuration(model.recordingDuration(at: context.date)), label: "CAPTURADO")
-                    Spacer()
-                    metric("\(model.frameCount)", label: "QUADROS")
-                    Spacer()
-                    metric(formatInterval(model.captureInterval), label: "INTERVALO")
+            if model.frameCount == 0 {
+                infoRow(
+                    title: model.lastCaptureErrorMessage == nil ? "Preparando a primeira captura…" : "Tentando reconectar à captura…",
+                    detail: model.lastCaptureErrorMessage ?? "O relógio começará quando o primeiro quadro for salvo."
+                )
+            } else {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack {
+                        metric(formatDuration(model.recordingDuration(at: context.date)), label: "CAPTURADO")
+                        Spacer()
+                        metric("\(model.frameCount)", label: "QUADROS")
+                        Spacer()
+                        metric(formatInterval(model.captureInterval), label: "INTERVALO")
+                    }
                 }
             }
         case .paused(let reason):
@@ -96,7 +103,7 @@ struct ContentView: View {
                     Label(reason.title, systemImage: reason.systemImage)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Color.tempoPause)
-                    Text(reason.detail)
+                    Text(model.pausedDetail(for: reason))
                         .font(.system(size: 11))
                         .foregroundStyle(Color.tempoMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -177,19 +184,36 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
-                Button(action: model.stopAndExport) {
-                    Label("Parar e criar vídeo", systemImage: "stop.fill")
-                        .frame(minWidth: 148)
+                if model.canExport {
+                    Button(action: model.stopAndExport) {
+                        Label("Parar e criar vídeo", systemImage: "stop.fill")
+                            .frame(minWidth: 148)
+                    }
+                    .buttonStyle(TempoButtonStyle(color: Color.tempoRecord))
+                } else {
+                    Button(action: model.cancelRecording) {
+                        Label("Cancelar", systemImage: "xmark")
+                            .frame(minWidth: 104)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(TempoButtonStyle(color: Color.tempoRecord))
             }
         case .paused:
             HStack(spacing: 10) {
-                Button(action: model.stopAndExport) {
-                    Label("Criar vídeo", systemImage: "stop.fill")
+                if model.canExport {
+                    Button(action: model.stopAndExport) {
+                        Label("Criar vídeo", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                } else {
+                    Button(action: model.cancelRecording) {
+                        Label("Cancelar", systemImage: "xmark")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
 
                 Button(action: model.resumeRecording) {
                     Label("Continuar", systemImage: "play.fill")
@@ -197,6 +221,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(TempoButtonStyle(color: Color.tempoMain))
                 .keyboardShortcut(.defaultAction)
+                .disabled(!model.canResume)
             }
         case .exporting, .requestingPermission:
             Button("Aguarde…") { }
