@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @Binding var appearanceMode: AppearanceMode
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,9 +16,9 @@ struct ContentView: View {
                         .fill(Color.tempoStage)
                         .overlay {
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .stroke(Color.white.opacity(0.72), lineWidth: 1)
+                                .stroke(Color.tempoBorder, lineWidth: 1)
                         }
-                        .shadow(color: Color.tempoInk.opacity(0.08), radius: 24, y: 12)
+                        .shadow(color: Color.tempoShadow, radius: 24, y: 12)
                 }
                 .padding(.horizontal, 28)
 
@@ -32,7 +33,7 @@ struct ContentView: View {
         }
         .frame(width: 620, height: 560)
         .background(Color.tempoCanvas)
-        .preferredColorScheme(.light)
+        .preferredColorScheme(appearanceMode.colorScheme)
         .alert("Continuar o timelapse?", isPresented: $model.showResumePrompt) {
             Button("Continuar", action: model.resumeRecording)
             Button("Manter pausado", role: .cancel, action: model.keepPaused)
@@ -53,6 +54,23 @@ struct ContentView: View {
                     .foregroundStyle(Color.tempoMuted)
             }
             Spacer()
+            Menu {
+                Picker("Aparência", selection: $appearanceMode) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.systemImage).tag(mode)
+                    }
+                }
+            } label: {
+                Image(systemName: appearanceMode.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.tempoMuted)
+                    .frame(width: 28, height: 28)
+                    .background(Color.tempoStage.opacity(0.72))
+                    .clipShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .help("Aparência")
+
             if model.isRecording {
                 Label("GRAVANDO", systemImage: "record.circle.fill")
                     .font(.system(size: 11, weight: .bold, design: .rounded))

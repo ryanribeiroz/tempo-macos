@@ -28,6 +28,22 @@
 | `TEMPO-F008-R04` | Pausar com diagnóstico após falhas persistentes | `pauseAfterCaptureInterruption(error:)` | `testPersistentFailuresPauseWithDiagnosticAndNoFakeDuration` |
 | `TEMPO-F008-R05` | Não oferecer exportação vazia | `AppModel.canExport`, controles de `ContentView` | `testPersistentFailuresPauseWithDiagnosticAndNoFakeDuration` |
 | `TEMPO-F008-R06` | Preservar temporários recentes | `TemporarySessionCleaner` | `testCleanupPreservesRecentTempoSessionAndRemovesOnlyStaleSession` |
+| `TEMPO-F009-R01` | Minimizar ao iniciar nova gravação | `AppChromePolicy.shouldMinimize`, `AppWindowController` | `testOnlyInitialRecordingTransitionMinimizesWindow` |
+| `TEMPO-F009-R02` | Mostrar estado na barra superior | `MenuBarExtra`, `MenuBarPresentation` | `testMenuBarPresentationReflectsRecordingPhase` |
+| `TEMPO-F009-R03` | Oferecer ações válidas por fase | `AppChromePolicy.actions`, `MenuBarControlView` | `testMenuActionsRespectFramesAndResumeAvailability` |
+| `TEMPO-F009-R04` | Restaurar e focar a janela | `openWindow`, `AppWindowController.showMainWindow` | Build + validação interativa |
+| `TEMPO-F009-R05` | Aplicar Sistema/Claro/Escuro | `AppearanceMode`, `ContentView`, `Theme` | `testAppearanceModesHaveStablePersistenceValues` |
+| `TEMPO-F009-R06` | Persistir aparência | `@AppStorage(AppearanceMode.storageKey)` | `testAppearanceModesHaveStablePersistenceValues` |
+| `TEMPO-F009-R07` | Não exportar sem quadros pelo menu | `AppChromePolicy.actions` | `testMenuActionsRespectFramesAndResumeAvailability` |
+| `TEMPO-F010-R01` | Mostrar tempo decorrido na gravação pela barra superior | `AppChromePolicy.presentation`, `MenuBarControlView` | `testMenuBarPresentationReflectsRecordingPhase` |
+| `TEMPO-F010-R02` | Atualizar o cronômetro do menu a cada segundo | `MenuBarControlView` (`TimelineView`) | Build + validação interativa |
+| `TEMPO-F010-R03` | Manter a contagem de quadros visível no menu | `MenuBarControlView` | Build + validação interativa |
+| `TEMPO-F011-R01` | Persistir pasta após exportação concluída | `ExportDestinationPolicy.rememberSuccessfulExport`, bloco de sucesso em `AppModel` | `testSuccessfulExportDirectorySurvivesPolicyRelaunch` |
+| `TEMPO-F011-R02` | Reabrir painel na última pasta bem-sucedida | `ExportDestinationPolicy.preferredDirectory`, `AppModel.stopAndExport` | `testSuccessfulExportDirectorySurvivesPolicyRelaunch` |
+| `TEMPO-F011-R03` | Voltar para Filmes se a preferência for inválida | `ExportDestinationPolicy.preferredDirectory` | `testMissingRememberedDirectoryFallsBackToMoviesDirectory`, `testRememberedFileCannotBeUsedAsExportDirectory` |
+| `TEMPO-F011-R04` | Preservar o início original em pausas e retomadas | `AppModel.recordingStartedAt`, `beginRecording`, `resumeRecording` | Regressões de pausa existentes + inspeção da atribuição única |
+| `TEMPO-F011-R05` | Nomear pelo início, não pela exportação | `ExportDestinationPolicy.suggestedFilename`, `AppModel.stopAndExport` | `testSuggestedFilenameUsesSessionStartInsteadOfExportTime` |
+| `TEMPO-F011-R06` | Não trocar pasta em cancelamento ou falha | Chamada de persistência somente após `VideoExporter.export` | Inspeção do fluxo + `testSuccessfulExportDirectorySurvivesPolicyRelaunch` |
 
 ## Evidências manuais
 

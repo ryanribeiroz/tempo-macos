@@ -43,20 +43,24 @@ final class AppModel: ObservableObject {
     private var recordingTask: Task<Void, Never>?
     private var pauseSettlingTask: Task<Void, Never>?
     private var segmentStartedAt: Date?
+    private var recordingStartedAt: Date?
     private var wakePromptSent = false
     private var activeSystemInterruptions: Set<SystemInterruption> = []
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private let maximumConsecutiveCaptureFailures: Int
     private let captureRetryBaseDelayNanoseconds: UInt64
+    private let exportDestinationPolicy: ExportDestinationPolicy
 
     init(
         session: (any CaptureSessionProtocol)? = nil,
         maximumConsecutiveCaptureFailures: Int = 5,
-        captureRetryBaseDelayNanoseconds: UInt64 = 500_000_000
+        captureRetryBaseDelayNanoseconds: UInt64 = 500_000_000,
+        exportDestinationPolicy: ExportDestinationPolicy = ExportDestinationPolicy()
     ) {
         self.session = session
         self.maximumConsecutiveCaptureFailures = maximumConsecutiveCaptureFailures
         self.captureRetryBaseDelayNanoseconds = captureRetryBaseDelayNanoseconds
+        self.exportDestinationPolicy = exportDestinationPolicy
         removeStaleTemporarySessions()
         refreshDisplays()
         NotificationCoordinator.shared.configure()
@@ -129,6 +133,7 @@ final class AppModel: ObservableObject {
             exportProgress = 0
             accumulatedRecordingDuration = 0
             segmentStartedAt = nil
+            recordingStartedAt = Date()
             wakePromptSent = false
             activeSystemInterruptions.removeAll()
             showResumePrompt = false
@@ -247,17 +252,19 @@ final class AppModel: ObservableObject {
                 await session.discard()
                 self.session = nil
                 phase = .failed(TempoError.noFrames.localizedDescription)
+                resetRecordingClock()
                 return
             }
 
             let savePanel = NSSavePanel()
             savePanel.title = "Salvar timelapse"
-            savePanel.nameFieldStringValue = Self.suggestedFilename()
+            savePanel.nameFieldStringValue = exportDestinationPolicy.suggestedFilename(
+                recordingStartedAt: recordingStartedAt
+            )
             savePanel.allowedContentTypes = [.mpeg4Movie]
             savePanel.canCreateDirectories = true
-            if let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
-                savePanel.directoryURL = movies
-            }
+            let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            savePanel.directoryURL = exportDestinationPolicy.preferredDirectory(fallback: movies)
 
             guard savePanel.runModal() == .OK, let outputURL = savePanel.url else {
                 await session.discard()
@@ -272,6 +279,7 @@ final class AppModel: ObservableObject {
                 try await exporter.export(frames: snapshot.frameURLs, to: outputURL, quality: quality) { progress in
                     await MainActor.run { self.exportProgress = progress }
                 }
+                exportDestinationPolicy.rememberSuccessfulExport(at: outputURL)
                 await session.discard()
                 self.session = nil
                 phase = .finished(outputURL)
@@ -335,13 +343,6 @@ final class AppModel: ObservableObject {
         lastCaptureErrorMessage = nil
         resetRecordingClock()
         refreshDisplays()
-    }
-
-    private static func suggestedFilename() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "pt_BR")
-        formatter.dateFormat = "yyyy-MM-dd 'às' HH-mm"
-        return "Timelapse \(formatter.string(from: Date())).mp4"
     }
 
     private static func captureErrorMessage(for error: Error) -> String {
@@ -413,6 +414,7 @@ final class AppModel: ObservableObject {
 
     private func resetRecordingClock() {
         segmentStartedAt = nil
+        recordingStartedAt = nil
         accumulatedRecordingDuration = 0
     }
 

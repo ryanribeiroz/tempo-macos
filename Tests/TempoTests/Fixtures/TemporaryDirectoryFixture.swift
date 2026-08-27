@@ -12,4 +12,10 @@ struct TemporaryDirectoryFixture {
     func remove() {
         try? FileManager.default.removeItem(at: url)
     }
+
+    func makeFile(named name: String, contents: Data = Data()) throws -> URL {
+        let fileURL = url.appendingPathComponent(name, isDirectory: false)
+        try contents.write(to: fileURL)
+        return fileURL
+    }
 }
